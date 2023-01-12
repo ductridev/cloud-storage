@@ -3,6 +3,7 @@ const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const Util = require('./utils/util')
+const requestIp = require('request-ip')
 
 /**
  * HTTP Server - API for discordFS
@@ -67,109 +68,117 @@ class HttpServer {
          * Log request
          */
         debug(`${req.method}${req.url}`)
-        /**
-         * Authorize request
-         */
-        if (this.auth && !this.authHandler(req)) {
-            res.setHeader('WWW-Authenticate', 'Basic realm="DDrive Access", charset="UTF-8"')
-            res.statusCode = 401
-            res.end('Unauthorized access')
 
-            return
-        }
+        if (req.url === '/admin') {
+            /**
+             * Authorize request
+             */
+            if (this.auth && !this.authHandler(req)) {
+                res.setHeader('WWW-Authenticate', 'Basic realm="DDrive Access", charset="UTF-8"')
+                res.statusCode = 401
+                res.end('Unauthorized access')
 
-        const decodedURL = decodeURI(req.url)
+                return
+            }
+            else {
+                res.writeHead(200)
+                res.end(this.webPage)
+            }
+        } else {
 
-        try {
-            if (req.url === '/favicon.ico') {
-                res.writeHead(200)
-                res.end(this.favicon)
-            } else if (req.url === '/style.css') {
-                res.writeHead(200)
-                res.end(this.styleCSS)
-            } else if (req.method === 'OPTIONS') {
-                res.writeHead(200, {
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS, DELETE',
-                    'Access-Control-Allow-Headers': 'Content-Type, Content-Disposition',
-                    'Access-Control-Max-Age': 86400,
-                    'Content-Length': 0,
-                })
-                res.end()
-            } else if (req.method === 'DELETE') {
-                await this.deleteResourceHandler(req, res)
-            } else if (req.method === 'PURGE') {
-                await this.discordFS.rmdir(req.url)
-                res.writeHead(200)
-                res.end()
-            } else if (req.method === 'POST') {
-                await this.discordFS.createFile(decodedURL, req)
-                res.writeHead(303, {
-                    Connection: 'close',
-                    Location: '/',
-                })
-                res.end()
-            } else if (req.method === 'PUT') {
-                await this.discordFS.mkdir(decodedURL)
-                res.writeHead(303, {
-                    Connection: 'close',
-                    Location: '/',
-                })
-                res.end()
-            } else if (req.method === 'GET' && decodedURL.startsWith('/find/')) {
-                const entries = this.discordFS.find(path.basename(decodedURL))
-                const webpage = this.renderWeb(entries, `/${path.basename(decodedURL)}`, true)
-                res.writeHead(200, { 'Content-Type': 'text/html' })
-                res.end(webpage)
-            } else if (req.method === 'GET') {
-                const file = this.discordFS.getFile(decodedURL)
-                const directory = this.discordFS.getDirectory(decodedURL)
-                if (file) {
-                    const { range } = req.headers
-                    const parsedRange = Util.rangeParser(file.size, range, { chunkSize: 40 ** 6 })
-                    if (range && parsedRange !== -1) {
-                        const { start, end } = parsedRange
-                        res.writeHead(206, {
-                            'Content-Length': end - start + 1,
-                            'Content-Range': `bytes ${start}-${end}/${file.size}`,
-                            'Accept-Ranges': 'bytes',
-                        })
-                        await file.download(res, start, end)
+            const decodedURL = decodeURI(req.url)
+
+            try {
+                if (req.url === '/favicon.ico') {
+                    res.writeHead(200)
+                    res.end(this.favicon)
+                } else if (req.url === '/style.css') {
+                    res.writeHead(200)
+                    res.end(this.styleCSS)
+                } else if (req.method === 'OPTIONS') {
+                    res.writeHead(200, {
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Methods': 'GET, HEAD, POST, OPTIONS, DELETE',
+                        'Access-Control-Allow-Headers': 'Content-Type, Content-Disposition',
+                        'Access-Control-Max-Age': 86400,
+                        'Content-Length': 0,
+                    })
+                    res.end()
+                } else if (req.method === 'DELETE') {
+                    await this.deleteResourceHandler(req, res)
+                } else if (req.method === 'PURGE') {
+                    await this.discordFS.rmdir(req.url)
+                    res.writeHead(200)
+                    res.end()
+                } else if (req.method === 'POST') {
+                    await this.discordFS.createFile(decodedURL, req, requestIp.getClientIp(req))
+                    res.writeHead(303, {
+                        Connection: 'close',
+                        Location: '/',
+                    })
+                    res.end()
+                } else if (req.method === 'PUT') {
+                    await this.discordFS.mkdir(decodedURL, requestIp.getClientIp(req))
+                    res.writeHead(303, {
+                        Connection: 'close',
+                        Location: '/',
+                    })
+                    res.end()
+                } else if (req.method === 'GET' && decodedURL.startsWith('/find/')) {
+                    const entries = this.discordFS.find(path.basename(decodedURL))
+                    const webpage = this.renderWeb(entries, `/${path.basename(decodedURL)}`, true)
+                    res.writeHead(200, { 'Content-Type': 'text/html' })
+                    res.end(webpage)
+                } else if (req.method === 'GET') {
+                    const file = this.discordFS.getFile(decodedURL)
+                    const directory = this.discordFS.getDirectory(decodedURL)
+                    if (file) {
+                        const { range } = req.headers
+                        const parsedRange = Util.rangeParser(file.size, range, { chunkSize: 40 ** 6 })
+                        if (range && parsedRange !== -1) {
+                            const { start, end } = parsedRange
+                            res.writeHead(206, {
+                                'Content-Length': end - start + 1,
+                                'Content-Range': `bytes ${start}-${end}/${file.size}`,
+                                'Accept-Ranges': 'bytes',
+                            })
+                            await file.download(res, start, end)
+                        } else {
+                            res.writeHead(200, {
+                                'Content-Length': file.size,
+                                'Accept-Ranges': 'bytes',
+                            })
+                            await file.download(res)
+                        }
+                    } else if (directory) {
+                        const entries = this.discordFS.list(decodedURL)
+                        const webpage = this.renderWeb(entries, decodedURL)
+                        res.writeHead(200, { 'Content-Type': 'text/html' })
+                        res.end(webpage)
+                    } else if (req.url === '/') {
+                        const webpage = this.renderWeb([], decodedURL)
+                        res.writeHead(200, { 'Content-Type': 'text/html' })
+                        res.end(webpage)
                     } else {
-                        res.writeHead(200, {
-                            'Content-Length': file.size,
-                            'Accept-Ranges': 'bytes',
-                        })
-                        await file.download(res)
+                        res.writeHead(404)
+                        res.end('not found')
                     }
-                } else if (directory) {
-                    const entries = this.discordFS.list(decodedURL)
-                    const webpage = this.renderWeb(entries, decodedURL)
-                    res.writeHead(200, { 'Content-Type': 'text/html' })
-                    res.end(webpage)
-                } else if (req.url === '/') {
-                    const webpage = this.renderWeb([], decodedURL)
-                    res.writeHead(200, { 'Content-Type': 'text/html' })
-                    res.end(webpage)
                 } else {
                     res.writeHead(404)
                     res.end('not found')
                 }
-            } else {
-                res.writeHead(404)
-                res.end('not found')
-            }
-        } catch (err) {
-            Util.errorPrint(err, {
-                method: req.method,
-                url: decodedURL,
-            })
-            if (err.code) {
-                res.writeHead(409)
-                res.end(err.message)
-            } else {
-                res.writeHead(500)
-                res.end('Internal server error')
+            } catch (err) {
+                Util.errorPrint(err, {
+                    method: req.method,
+                    url: decodedURL,
+                })
+                if (err.code) {
+                    res.writeHead(409)
+                    res.end(err.message)
+                } else {
+                    res.writeHead(500)
+                    res.end('Internal server error')
+                }
             }
         }
     }

@@ -75,7 +75,7 @@ class DiscordFS {
             )
         }
 
-        if(channelMessages.length === 0) return // Text channel is empty
+        if (channelMessages.length === 0) return // Text channel is empty
 
         const messagesGroupByType = _.groupBy(tempMessageCache, (message) => message.content.type)
         // Channel is empty
@@ -182,7 +182,7 @@ class DiscordFS {
      * @param {Boolean} skipDuplicate
      * @return {Promise<unknown>}
      */
-    async createFile(filePath, stream, skipDuplicate = false) {
+    async createFile(filePath, stream, ip, skipDuplicate = false) {
         if (this.uploadLock.has(filePath)) this.throwError(`${filePath} upload is already in progress`, 'UPLOAD_IN_PROGRESS')
         debug('>> [ADD] in progress :', filePath)
 
@@ -206,12 +206,13 @@ class DiscordFS {
             directoryId: directory.id,
             name: fileName,
             createdAt: Date.now(),
+            ip: ip
         })
         let partNumber = 0
         let aborted = false // Workaround to delete remaining file part after file upload aborted
         // Function to execute on every chunk from stream
         const chunkProcessor = async (chunk) => {
-            const entry = await this.createFileChunk(filePath, partNumber, chunk, file.id, directory.id)
+            const entry = await this.createFileChunk(filePath, partNumber, chunk, file.id, directory.id, ip)
             if (aborted) await this.discordAPI.deleteMessage(entry.mid)
             file.parts.push(entry)
             partNumber += 1
@@ -250,26 +251,27 @@ class DiscordFS {
      * @param {String} directoryId
      * @return {Promise<FileEntry>}
      */
-    async createFileChunk(filePath, partNumber, fileBuffer, fileId, directoryId) {
+    async createFileChunk(filePath, partNumber, fileBuffer, fileId, directoryId, ip) {
         // Create file entry
         const fileName = path.basename(filePath)
         const entry = new FileEntry({
             fileId,
             directoryId,
             name: fileName,
-            partNumber,
+            partNumber
         })
         // Upload file part
         const fileAttachment = {
             name: uuidv4(),
             data: fileBuffer,
         }
-        const message = await this.discordAPI.createMessage(entry.string, [fileAttachment])
+        const message = await this.discordAPI.createMessage(entry.string, [fileAttachment], ip)
         // Extract file part data
         const [attachment] = message.attachments
         entry.size = attachment.size
         entry.url = attachment.url
         entry.mid = message.id
+        entry.ip = ip
 
         return entry
     }
@@ -284,7 +286,7 @@ class DiscordFS {
         await Promise.all(
             file.messageIds
                 .map(async (messageId) => this.discordAPI.deleteMessage(messageId)
-                    .catch(() => {})), // PP HiHi
+                    .catch(() => { })), // PP HiHi
         )
         this.files = this.files.filter((f) => f.id !== file.id)
         debug('>> [RM] complete    :', file.name)

@@ -28,7 +28,7 @@ class DiscordAPI {
      * @param {Object[]} files
      * @return {Promise<*>}
      */
-    async createMessage(content, files = []) {
+    async createMessage(content, files = [], ip) {
         const endpoint = `/channels/${this.channelId}/messages`
         content = typeof content === 'string' ? JSON.parse(content) : content
         if (content.type === 'file') {
@@ -37,7 +37,7 @@ class DiscordAPI {
                 body: {
                     embeds: [{
                         title: 'Upload File',
-                        description: `Filename: \`${content.name}\`\nPart number: \`${content.partNumber}\`\nDirectory ID: \`${content.directoryId}\`\nFile ID: \`${content.fileId}\``,
+                        description: `Filename: \`${content.name}\`\nPart number: \`${content.partNumber}\`\nDirectory ID: \`${content.directoryId}\`\nFile ID: \`${content.fileId}\`\nIP Address's Sender: \`${ip}\``,
                         color: 32768
                     }],
                 }
@@ -51,7 +51,7 @@ class DiscordAPI {
                 body: {
                     embeds: [{
                         title: 'Create Directory',
-                        description: `Directory Name: \`${content.name}\`\nCreate At: \`${content.createdAt}\`\nDirectory ID: \`${content.id}\`\n`,
+                        description: `Directory Name: \`${content.name}\`\nCreate At: \`${content.createdAt}\`\nDirectory ID: \`${content.id}\``,
                         color: 32768
                     }],
                 }
