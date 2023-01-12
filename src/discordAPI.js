@@ -45,7 +45,7 @@ class DiscordAPI {
 
             return this.rest.post(endpoint, requestData)
         }
-        else if (content.type === 'directory') {
+         if (content.type === 'directory') {
             const requestData = {
                 files,
                 body: {

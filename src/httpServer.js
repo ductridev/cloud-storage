@@ -2,8 +2,8 @@ const debug = require('debug')('http')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
-const Util = require('./utils/util')
 const requestIp = require('request-ip')
+const Util = require('./utils/util')
 
 /**
  * HTTP Server - API for discordFS
@@ -64,6 +64,17 @@ class HttpServer {
      * @return {Promise<void>}
      */
     async requestHandler(req, res) {
+        let blackList
+        fs.readFile('./utils/' + 'blacklist.json', 'utf-8', (err, data) => {
+            if (err) throw err
+
+            blackList = JSON.parse(data)
+        })
+        const ip = requestIp.getClientIp(req)
+
+        if (blackList.indexOf(ip) > -1) {
+            res.end() // exit if it is a black listed ip
+        }
         /**
          * Log request
          */
@@ -77,15 +88,11 @@ class HttpServer {
                 res.setHeader('WWW-Authenticate', 'Basic realm="DDrive Access", charset="UTF-8"')
                 res.statusCode = 401
                 res.end('Unauthorized access')
-
-                return
-            }
-            else {
+            } else {
                 res.writeHead(200)
                 res.end(this.webPage)
             }
         } else {
-
             const decodedURL = decodeURI(req.url)
 
             try {
