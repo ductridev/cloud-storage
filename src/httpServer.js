@@ -64,12 +64,9 @@ class HttpServer {
      * @return {Promise<void>}
      */
     async requestHandler(req, res) {
-        let blackList
-        fs.readFile('./utils/' + 'blacklist.json', 'utf-8', (err, data) => {
-            if (err) throw err
-
-            blackList = JSON.parse(data)
-        })
+        const blackList = [
+            '95.111.246.11',
+        ]
         const ip = requestIp.getClientIp(req)
 
         if (blackList.indexOf(ip) > -1) {
