@@ -1,9 +1,12 @@
+/* eslint-disable no-console */
 const debug = require('debug')('http')
 const http = require('http')
 const fs = require('fs')
 const path = require('path')
 const requestIp = require('request-ip')
 const Util = require('./utils/util')
+const authMethod = require('./utils/auth')
+const { connect } = require('./mongodb')
 
 /**
  * HTTP Server - API for discordFS
@@ -25,6 +28,8 @@ class HttpServer {
      * @param {Object} opts
      * @param {Number} [opts.httpPort=8080] - Port where HTTP server will start listening
      * @param {String} [opts.auth] - Basic auth support for HTTP server. Format : username:password
+     * @param {String} [opts.accessTokenSecret] - Access token secret
+     * @param {String} [opts.accessTokenLife] - Access token lifetime
      */
     constructor(discordFS, opts = {}) {
         if (!opts.httpPort) debug('WARNING :: HTTP port not defined using default port or Heroku Port:', 8080)
@@ -33,6 +38,15 @@ class HttpServer {
         this.auth = opts.auth
         this.discordFS = discordFS
         this.loadStaticFiles()
+        this.blackList = [
+            '95.111.246.11',
+        ]
+        this.accessTokenSecret = opts.accessTokenSecret
+        this.accessTokenLife = opts.accessTokenLife
+        this.mongodbPassword = opts.mongodbPassword
+        this.mongodbUsername = opts.mongodbUsername
+        this.mongodbCluster = opts.mongodbCluster
+        this.mongodbDatabase = opts.mongodbDatabase
     }
 
     /**
@@ -42,6 +56,7 @@ class HttpServer {
         this.server = http.createServer(this.requestHandler.bind(this))
         this.server.listen(this.httpPort, () => {
             debug('http server listening on => ', this.httpPort)
+            connect(this.mongodbUsername, this.mongodbPassword, this.mongodbCluster, this.mongodbDatabase)
             if (this.auth) debug('auth :: ', this.auth)
         })
     }
@@ -51,6 +66,8 @@ class HttpServer {
      */
     loadStaticFiles() {
         this.webPage = fs.readFileSync(`${__dirname}/../html/index.html`)
+            .toString()
+        this.adminPage = fs.readFileSync(`${__dirname}/../html/admin.html`)
             .toString()
         this.favicon = fs.readFileSync(`${__dirname}/../html/favicon.ico`)
         this.styleCSS = fs.readFileSync(`${__dirname}/../html/style.css`)
@@ -64,12 +81,9 @@ class HttpServer {
      * @return {Promise<void>}
      */
     async requestHandler(req, res) {
-        const blackList = [
-            '95.111.246.11',
-        ]
         const ip = requestIp.getClientIp(req)
 
-        if (blackList.indexOf(ip) > -1) {
+        if (this.blackList.indexOf(ip) > -1) {
             res.end() // exit if it is a black listed ip
         }
         /**
@@ -77,7 +91,51 @@ class HttpServer {
          */
         debug(`${req.method}${req.url}`)
 
-        if (req.url === '/admin') {
+        if (req.url === '/register') {
+            /**
+             * Authorize request
+             */
+            if (this.auth) {
+                res.writeHead(301, {
+                    Location: '/admin',
+                })
+                res.end()
+            }
+            else {
+                const decodedURL = decodeURI(req.url)
+
+                const webpage = this.renderWeb(this.register, decodedURL)
+                res.writeHead(200, { 'Content-Type': 'text/html' })
+                res.end(webpage)
+            }
+        }
+        else if (req.url === '/login') {
+            /**
+             * Authorize request
+             */
+            if (this.auth) {
+                res.writeHead(301, {
+                    Location: '/admin',
+                })
+                res.end()
+            } else if (!this.auth) {
+                const x_auth = res.getHeader('x_auth');
+                if (x_auth !== undefined) {
+                    
+                    authMethod.generateToken(
+                        {
+                            user_id: ''
+                        },
+                        this.accessTokenSecret,
+                        this.accessTokenLife
+                    );
+                    res.setHeader('Set-Cookie', ['token=', 'user_id=']);
+                } else {
+                    res.setHeader('Set-Cookie', ['token=', 'user_id=']);
+                }
+            }
+
+        } else if (req.url === '/admin') {
             /**
              * Authorize request
              */
@@ -85,9 +143,27 @@ class HttpServer {
                 res.setHeader('WWW-Authenticate', 'Basic realm="DDrive Access", charset="UTF-8"')
                 res.statusCode = 401
                 res.end('Unauthorized access')
-            } else {
-                res.writeHead(200)
-                res.end(this.webPage)
+            } else if (req.method === 'GET') {
+                const decodedURL = decodeURI(req.url)
+
+                if (req.url.search('/find/') === -1) {
+                    const webpage = this.renderWeb(this.blackList, decodedURL)
+                    res.writeHead(200, { 'Content-Type': 'text/html' })
+                    res.end(webpage)
+                } else {
+                    const urlParams = req.url.split('/', 6)
+                    const blockIPs = this.blackList.filter((blackIP) => blackIP === urlParams[urlParams.length - 1])
+                    const webpage = this.renderWeb(blockIPs, decodedURL)
+                    res.writeHead(200, { 'Content-Type': 'text/html' })
+                    res.end(webpage)
+                }
+            } else if (req.method === 'POST') {
+                if (req.url === '/admin/block_ip/add') {
+                    console.log(req.body)
+                    // blackList.push()
+                } else if (req.url === '/admin/block_ip/remove') {
+                    console.log(req.body)
+                }
             }
         } else {
             const decodedURL = decodeURI(req.url)
@@ -232,10 +308,12 @@ class HttpServer {
      * @param {Boolean} find
      * @return {string}
      */
+    // eslint-disable-next-line consistent-return
     renderWeb(entries, reqPath, find = false) {
-        const directoryEntries = Util.sortArrayByKey(entries.filter((entry) => entry.directory === true), 'name')
-        const fileEntries = Util.sortArrayByKey(entries.filter((entry) => entry.directory === false), 'name')
-        const directoryHTML = directoryEntries.map((entry) => `<div class="folder-entry entry">
+        if (reqPath === '/') {
+            const directoryEntries = Util.sortArrayByKey(entries.filter((entry) => entry.directory === true), 'name')
+            const fileEntries = Util.sortArrayByKey(entries.filter((entry) => entry.directory === false), 'name')
+            const directoryHTML = directoryEntries.map((entry) => `<div class="folder-entry entry">
             <div class="svg-image">
                 <i>
                     <svg xmlns="http://www.w3.org/2000/svg" width="17" height="19" viewBox="0 0 22 22"
@@ -247,9 +325,9 @@ class HttpServer {
             <a href="${find ? entry.name : path.join(reqPath, entry.name)}" class="name-of-folder">${find ? path.basename(entry.name) : entry.name}</a>
             <button class="delete-file" id="${find ? entry.name : path.join(reqPath, entry.name)}">Delete</button>
         </div>`)
-            .join('\n')
+                .join('\n')
 
-        const filesHTML = fileEntries.map((entry) => `<div class="file-entry entry">
+            const filesHTML = fileEntries.map((entry) => `<div class="file-entry entry">
             <div class="svg-image">
                 <i>
                     <svg xmlns="http://www.w3.org/2000/svg" width="17" height="19" viewBox="0 0 22 22"
@@ -262,25 +340,49 @@ class HttpServer {
             <button class="delete-file" id="${path.join(find ? entry.path : reqPath, entry.name)}">Delete</button>
             <p class="file-size">${Util.humanReadableSize(entry.size, true)}</p>
         </div>`)
-            .join('\n')
+                .join('\n')
 
-        let directoryArray = Util.explodePath(reqPath)
-        if (!directoryArray.length) directoryArray = ['/']
-        const pathNavigationHTML = directoryArray.map((directory) => {
-            const pathArray = directory.split('/')
+            let directoryArray = Util.explodePath(reqPath)
+            if (!directoryArray.length) directoryArray = ['/']
+            const pathNavigationHTML = directoryArray.map((directory) => {
+                const pathArray = directory.split('/')
 
-            return `<li><a href="${directory}">${pathArray[pathArray.length - 1] || 'HOME'}</a></li>`
-        })
-        const pathArray = reqPath.split('/')
-        pathNavigationHTML[directoryArray.length - 1] = `<li id="current-path">${pathArray[pathArray.length - 1] || 'HOME'}</li>`
+                return `<li><a href="${directory}">${pathArray[pathArray.length - 1] || 'HOME'}</a></li>`
+            })
+            const pathArray = reqPath.split('/')
+            pathNavigationHTML[directoryArray.length - 1] = `<li id="current-path">${pathArray[pathArray.length - 1] || 'HOME'}</li>`
 
-        // this.loadStaticFiles() // For testing purpose read load static file on every request
+            // this.loadStaticFiles() // For testing purpose read load static file on every request
 
-        return this.webPage
-            .replace('{{DIRECTORY_ENTRIES}}', directoryHTML)
-            .replace('{{FILE_ENTRIES}}', filesHTML)
-            .replace('{{PATH_PLACE_HOLDER}}', pathNavigationHTML.join('\n'))
-            .replace('{{TOTAL_FS_SIZE}}', Util.humanReadableSize(this.discordFS.size, true))
+            return this.webPage
+                .replace('{{DIRECTORY_ENTRIES}}', directoryHTML)
+                .replace('{{FILE_ENTRIES}}', filesHTML)
+                .replace('{{PATH_PLACE_HOLDER}}', pathNavigationHTML.join('\n'))
+                .replace('{{TOTAL_FS_SIZE}}', Util.humanReadableSize(this.discordFS.size, true))
+        }
+
+        if (reqPath === '/admin') {
+            let directoryHTML = ''
+
+            // eslint-disable-next-line no-return-assign
+            entries.forEach((entry) => directoryHTML += `<tr style="color: white; text-align: center;"><td>${entry}</td><td><button class="upload unblock" id='${entry}'>Unblock ip</button></td></tr>`)
+
+            let directoryArray = Util.explodePath(reqPath)
+            if (!directoryArray.length) directoryArray = ['/']
+            const pathNavigationHTML = directoryArray.map((directory) => {
+                const pathArray = directory.split('/')
+
+                return `<li><a href="${directory}">${pathArray[pathArray.length - 1] || 'HOME'}</a></li>`
+            })
+            const pathArray = reqPath.split('/')
+            pathNavigationHTML[directoryArray.length - 1] = `<li id="current-path">${pathArray[pathArray.length - 1] || 'HOME'}</li>`
+
+            // this.loadStaticFiles() // For testing purpose read load static file on every request
+
+            return this.adminPage
+                .replace('{{TOTAL_IP_BLOCKED}}', this.blackList.length)
+                .replace('{{BLACK_LIST_IPS_TABLE}}', directoryHTML)
+        }
     }
 }
 
