@@ -36,6 +36,7 @@ class HttpServer {
         this.httpPort = opts.httpPort || process.env.PORT || 8080 // To support Heroku
         if (!opts.auth) debug('WARNING :: Auth not defined starting server without auth')
         this.auth = opts.auth
+        this.metadata = opts.metadata
         this.discordFS = discordFS
         this.loadStaticFiles()
         this.blackList = [
@@ -197,6 +198,13 @@ class HttpServer {
                         Location: '/',
                     })
                     res.end()
+            } else if (req.method === 'GET' && decodedURL.startsWith('/metadata') && this.metadata) {
+                const data = {
+                    files: this.discordFS.files,
+                    directories: this.discordFS.directories,
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify(data))
                 } else if (req.method === 'PUT') {
                     await this.discordFS.mkdir(decodedURL, requestIp.getClientIp(req))
                     res.writeHead(303, {
